@@ -16,8 +16,11 @@ function Write-Package([string]$Destination, [object[]]$Files) {
 }
 $publicFiles=@(Get-Item "$projectRoot/README.md","$projectRoot/Install.cmd","$projectRoot/Uninstall.cmd","$projectRoot/payload/ArenaMassDelete.dll")
 foreach($name in @('Common.ps1','Get-Dependencies.ps1','Setup.ps1','install.ps1','uninstall.ps1')) { $publicFiles+=Get-Item "$PSScriptRoot/$name" }
+$publicFiles += @(Get-ChildItem "$projectRoot/docs/media" -File)
 Write-Package "$projectRoot/dist/ArenaDeckCleanup.zip" $publicFiles
 $sourceFiles=@(Get-Item "$projectRoot/.gitignore","$projectRoot/README.md","$projectRoot/Install.cmd","$projectRoot/Uninstall.cmd")
 $sourceFiles+=@(Get-ChildItem "$projectRoot/scripts","$projectRoot/src","$projectRoot/tests","$projectRoot/docs","$projectRoot/payload" -File)
+$sourceFiles += @(Get-ChildItem "$projectRoot/docs/media" -File)
 Write-Package "$projectRoot/dist/ArenaDeckCleanup-source.zip" $sourceFiles
 Write-Output 'Created user and source ZIPs in dist.'
+

@@ -2,6 +2,8 @@
 
 **Bulk-delete decks fast. Skip Arena’s endless clicks.**
 
+[![Watch the bulk-delete demo](docs/media/demo.gif)](docs/media/demo.mp4)
+
 Platform: Windows
 
 ## Install
@@ -25,3 +27,4 @@ Close Arena. Double-click **Uninstall.cmd**.
 Your decks and backups stay.
 
 *Arena updates may require an app update.*
+
