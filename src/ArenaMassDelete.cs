@@ -47,6 +47,8 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
     void Awake()
     {
         Directory.CreateDirectory(Root);
+        try { BackupRetention.Apply(Root); }
+        catch (Exception ex) { Logger.LogError("Backup cleanup failed: " + ex.Message); }
         try
         {
             var path = Path.Combine(Root, "preferences.json");
@@ -246,6 +248,7 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
         savedDecks.Clear(); backupFiles.Clear(); backupIndex = 0; backupQuery = "";
         try
         {
+            BackupRetention.Apply(Root);
             string directory = Path.Combine(Root, "backups");
             if (Directory.Exists(directory)) backupFiles.AddRange(Directory.GetFiles(directory, "decks.json", SearchOption.AllDirectories).OrderByDescending(p => p));
             string original = Path.Combine(Root, "legacy-backup.json");
@@ -300,7 +303,7 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
         GUILayout.Label("Find a deck", label, GUILayout.Width(100));
         backupQuery = GUILayout.TextField(backupQuery, field);
         GUILayout.EndHorizontal();
-        GUILayout.Label("Search this backup. Older backups stay saved; only this one is loaded.", detailStyle);
+        GUILayout.Label("Only your 50 newest saved decks are kept. Older ones are permanently removed.", detailStyle);
         scroll = GUILayout.BeginScrollView(scroll, GUILayout.ExpandHeight(true));
         foreach (var saved in savedDecks.Where(d => string.IsNullOrWhiteSpace(backupQuery) || DisplayName(d.Summary.Name).IndexOf(backupQuery, StringComparison.OrdinalIgnoreCase) >= 0))
         {
@@ -493,10 +496,11 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
                 var roundtrip = JsonConvert.DeserializeObject<Client_DeckContents>(json);
                 if (roundtrip == null || roundtrip.Piles == null || JsonConvert.SerializeObject(roundtrip.Piles) != JsonConvert.SerializeObject(contents.Piles))
                     throw new Exception("Backup validation failed. Nothing was deleted.");
-                backups.Add(new { Id = deck.Id, Name = deck.Summary.Name, Summary = deck.Summary, Contents = contents });
+                backups.Add(new { Id = deck.Id, Name = deck.Summary.Name, BackedUpAtUtc = DateTime.UtcNow, Summary = deck.Summary, Contents = contents });
             }
         }
         WriteJson(Path.Combine(runPath, "decks.json"), backups);
+        BackupRetention.Apply(Root);
         // Revalidate after all backups, before any mutation.
         yield return RefreshServer();
         if (!MassDeletePolicy.Same(initial, Snapshot())) throw new Exception("The deck list changed during backup. Nothing was deleted.");

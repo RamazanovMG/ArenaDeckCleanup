@@ -10,6 +10,7 @@ static class MassDeleteTests
     static ManagedDeck Deck(string name) { return new ManagedDeck { Id = Guid.NewGuid(), Name = name, Updated = new DateTime(2026,11,10) }; }
     static void Main()
     {
+        BackupRetentionTests.Run();
         var a = Deck("Same name"); var b = Deck("Same name"); var c = Deck("New deck");
         var rows = new List<ManagedDeck> { a, b, c };
         Check(MassDeletePolicy.Targets(rows, new HashSet<Guid> { a.Id, c.Id }).Single().Id == b.Id, "Identify by ID despite duplicate names");
@@ -34,3 +35,4 @@ static class MassDeleteTests
         Console.WriteLine(passed + " permanent-plugin policy checks passed");
     }
 }
+

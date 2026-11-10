@@ -97,6 +97,7 @@ folder. It deliberately leaves the fixture available for inspection.
 
 Backup browsing now opens only one cleanup file at a time (newest first),
 with older/newer navigation and a name filter within the selected backup.
-No automatic expiry or deletion is applied to recovery data.
+Only the 50 newest unique deck IDs are retained, keeping the newest version per ID. Older JSON entries and import-text copies are permanently removed on startup, opening Backups, and saving a cleanup backup. Recency uses backup capture time, not deck modification time.
 Only Install.cmd and Uninstall.cmd are user-facing launchers; all PowerShell
 helpers, including build/test/install/uninstall, live in scripts/.
+
