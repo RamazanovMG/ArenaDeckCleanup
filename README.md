@@ -1,36 +1,27 @@
 # Arena Deck Cleanup
 
-Delete many decks at once. Pick which ones stay.
+**Bulk-delete decks fast. Skip Arena’s endless clicks.**
 
 Platform: Windows
 
 ## Install
 
 1. Download and unzip.
-2. Close Arena.
-3. Double-click **Install.cmd**. Click **Yes** if asked.
+2. Close Arena. Double-click **Install.cmd**. Click **Yes** if asked.
 
-## Delete decks
+## Fast bulk deletion
 
 1. Open Arena → **Decks** → press **F8**.
-2. Check the decks to **KEEP**. Unchecked decks get deleted.
-3. Click **Review deletion** → **Delete**.
+2. Check decks to **KEEP**, uncheck decks to **DELETE**, then **Review deletion → Delete**.
 
-**Keep all / Keep none** affects every deck, even hidden ones.
-
-## Get a deck back
-
-Only the **50 newest deck backups** are kept. Older ones are deleted forever.
+## Restore up to 50 recently deleted decks
 
 **F8 → Backups → Copy for Import**.
-Use **Older / Newer** to pick a backup. Search by deck name.
-Close the panel. Click **Import** in Arena.
+Close the panel, then click **Import** in Arena.
 
-## Remove the app
+## Uninstall
 
 Close Arena. Double-click **Uninstall.cmd**.
 Your decks and backups stay.
 
-Arena updates may stop the app from working.
-
-
+*Arena updates may require an app update.*
