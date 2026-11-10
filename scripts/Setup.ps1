@@ -45,8 +45,8 @@ try {
     $form.Controls.Add($label); $form.Show(); $form.Refresh()
     [System.Windows.Forms.Application]::DoEvents()
     try {
-        if ($Mode -eq 'Install') { & "$root/install.ps1" -GamePath $game *> $logPath }
-        else { & "$root/uninstall.ps1" -GamePath $game *> $logPath }
+        if ($Mode -eq 'Install') { & "$root/scripts/install.ps1" -GamePath $game *> $logPath }
+        else { & "$root/scripts/uninstall.ps1" -GamePath $game *> $logPath }
     } finally { $form.Close(); $form.Dispose() }
     if ($Mode -eq 'Install') { Tell "Installed!`r`n`r`nOpen Arena, go to Decks, and press F8." }
     else { Tell 'Removed. Your decks and saved backups have been kept.' }
@@ -60,3 +60,4 @@ try {
     Tell ($friendly + "`r`n`r`nDetails: " + $logPath) 'Setup needs attention'
     exit 1
 }
+

@@ -12,19 +12,19 @@ assemblies and decompiled game source are not distributed here.
 From PowerShell in this folder:
 
 ```powershell
-./build.ps1
-./test.ps1
+./scripts/build.ps1
+./scripts/test.ps1
 # Close Arena before installing; elevation may be needed for Program Files.
-./install.ps1
+./scripts/install.ps1
 ```
 
 Common standalone/Steam locations and registered installations are detected.
 For other locations or multiple installations, pass the same explicit path:
 
 ```powershell
-./build.ps1 -GamePath 'D:/Games/MTGA'
-./install.ps1 -GamePath 'D:/Games/MTGA'
-./uninstall.ps1 -GamePath 'D:/Games/MTGA'
+./scripts/build.ps1 -GamePath 'D:/Games/MTGA'
+./scripts/install.ps1 -GamePath 'D:/Games/MTGA'
+./scripts/uninstall.ps1 -GamePath 'D:/Games/MTGA'
 ```
 
 Dependencies are downloaded from official BepInEx GitHub releases and NuGet,
@@ -67,14 +67,14 @@ Future Arena updates may replace loader files or change internal APIs. Reinstall
 if loader files were removed; API changes may require source updates/rebuilding.
 This is an unofficial plugin and future compatibility is not guaranteed.
 
-Close Arena and run `./uninstall.ps1`. Only tracked, unchanged plugin files are
+Close Arena and run `./scripts/uninstall.ps1`. Only tracked, unchanged plugin files are
 removed. Backups and preferences are retained. Other plugins are not loaded by
 this isolated runtime. An existing different loader requires manual resolution.
 
 ## Development / uploading
 
 Source is in `src/`; selection policy tests are in `tests/`.
-`./test.ps1` runs checks for ID-based protection, inventory changes and defaults.
+`./scripts/test.ps1` runs checks for ID-based protection, inventory changes and defaults.
 Do not commit `.tools`, `dist`, game assemblies, logs, backups or preferences.
 The source upload ZIP contains only source, scripts and this documentation.
 
@@ -93,3 +93,10 @@ checksum-verified BepInEx package; an internet connection is required.
 After downloading dependencies, tests/InstallTests.ps1 tests installation,
 reinstallation, modified-file protection and removal in a temporary fake game
 folder. It deliberately leaves the fixture available for inspection.
+
+
+Backup browsing now opens only one cleanup file at a time (newest first),
+with older/newer navigation and a name filter within the selected backup.
+No automatic expiry or deletion is applied to recovery data.
+Only Install.cmd and Uninstall.cmd are user-facing launchers; all PowerShell
+helpers, including build/test/install/uninstall, live in scripts/.

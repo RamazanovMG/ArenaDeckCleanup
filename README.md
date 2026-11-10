@@ -21,6 +21,7 @@ Platform: Windows
 ## Get a deck back
 
 **F8 → Backups → Copy for Import**.
+Use **Older / Newer** to pick a backup. Search by deck name.
 Close the panel. Click **Import** in Arena.
 
 ## Remove the app
@@ -29,3 +30,4 @@ Close Arena. Double-click **Uninstall.cmd**.
 Your decks and backups stay.
 
 Arena updates may stop the app from working.
+

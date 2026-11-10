@@ -1,5 +1,6 @@
 param([string]$GamePath)
-. "$PSScriptRoot/scripts/Common.ps1"
+$projectRoot = Split-Path $PSScriptRoot
+. "$projectRoot/scripts/Common.ps1"
 $game = Resolve-ArenaPath $GamePath
 if (Get-Process MTGA -ErrorAction SilentlyContinue) { throw 'Close Arena before uninstalling.' }
 $manifestPath = Join-Path $game 'DeckCleanupRuntime/install-manifest.json'
@@ -18,3 +19,4 @@ foreach ($entry in $manifest.Files) {
 foreach ($target in $targets) { Remove-Item -LiteralPath $target }
 Remove-Item -LiteralPath $manifestPath
 Write-Output 'Plugin removed. Backups and preferences retained in LocalAppData.'
+

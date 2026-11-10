@@ -1,18 +1,19 @@
 param([string]$GamePath)
-. "$PSScriptRoot/scripts/Common.ps1"
+$projectRoot = Split-Path $PSScriptRoot
+. "$projectRoot/scripts/Common.ps1"
 $game = Resolve-ArenaPath $GamePath
 if (Get-Process MTGA -ErrorAction SilentlyContinue) { throw 'Close Arena before installation.' }
-if (!(Test-Path "$PSScriptRoot/payload/ArenaMassDelete.dll")) { throw 'The download is incomplete. Download and extract the app again.' }
-& "$PSScriptRoot/scripts/Get-Dependencies.ps1"
+if (!(Test-Path "$projectRoot/payload/ArenaMassDelete.dll")) { throw 'The download is incomplete. Download and extract the app again.' }
+& "$projectRoot/scripts/Get-Dependencies.ps1"
 $runtime = Join-Path $game 'DeckCleanupRuntime'
 $manifestPath = Join-Path $runtime 'install-manifest.json'
 $previous = if (Test-Path -LiteralPath $manifestPath) { Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } else { $null }
 $entries = @()
-foreach ($file in Get-ChildItem "$PSScriptRoot/.tools/bepinex/BepInEx/core" -Filter '*.dll') { $entries += @{ Source=$file.FullName; Relative="DeckCleanupRuntime/core/$($file.Name)" } }
-$configPath = "$PSScriptRoot/.tools/doorstop_config.ini"
-$config = (Get-Content "$PSScriptRoot/.tools/bepinex/doorstop_config.ini" -Raw).Replace('BepInEx\core\BepInEx.Preloader.dll','DeckCleanupRuntime\core\BepInEx.Preloader.dll')
+foreach ($file in Get-ChildItem "$projectRoot/.tools/bepinex/BepInEx/core" -Filter '*.dll') { $entries += @{ Source=$file.FullName; Relative="DeckCleanupRuntime/core/$($file.Name)" } }
+$configPath = "$projectRoot/.tools/doorstop_config.ini"
+$config = (Get-Content "$projectRoot/.tools/bepinex/doorstop_config.ini" -Raw).Replace('BepInEx\core\BepInEx.Preloader.dll','DeckCleanupRuntime\core\BepInEx.Preloader.dll')
 [IO.File]::WriteAllText($configPath, $config, (New-Object Text.UTF8Encoding($false)))
-$entries += @{Source="$PSScriptRoot/.tools/bepinex/winhttp.dll"; Relative='winhttp.dll'}, @{Source=$configPath; Relative='doorstop_config.ini'}, @{Source="$PSScriptRoot/payload/ArenaMassDelete.dll"; Relative='DeckCleanupRuntime/plugins/ArenaMassDelete.dll'}
+$entries += @{Source="$projectRoot/.tools/bepinex/winhttp.dll"; Relative='winhttp.dll'}, @{Source=$configPath; Relative='doorstop_config.ini'}, @{Source="$projectRoot/payload/ArenaMassDelete.dll"; Relative='DeckCleanupRuntime/plugins/ArenaMassDelete.dll'}
 foreach ($entry in $entries) {
     $entry.Hash = (Get-FileHash -LiteralPath $entry.Source).Hash
     $target = Join-Path $game $entry.Relative
@@ -28,5 +29,6 @@ foreach ($entry in $entries) {
 }
 @{ Files=@($entries | ForEach-Object { @{Relative=$_.Relative; Hash=$_.Hash} }) } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
 Write-Output 'Installed. Open Arena > Decks > F8. Data: %LOCALAPPDATA%/ArenaDeckCleanup'
+
 
 

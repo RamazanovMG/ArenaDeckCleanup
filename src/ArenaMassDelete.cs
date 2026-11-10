@@ -31,6 +31,9 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
     bool visible, busy, confirming, uncertain, onDeckScreen, browsingBackups;
     class SavedDeck { public string Source; public Client_DeckSummary Summary; public Client_DeckContents Contents; }
     List<SavedDeck> savedDecks = new List<SavedDeck>();
+    List<string> backupFiles = new List<string>();
+    int backupIndex;
+    string backupQuery = "";
     GUIStyle deckNameStyle, badgeStyle, detailStyle;
     float nextProbe;
     List<ManagedDeck> rows = new List<ManagedDeck>();
@@ -240,15 +243,25 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
     void OpenBackups()
     {
         SavePreferences(); browsingBackups = true; scroll = Vector2.zero;
-        savedDecks.Clear();
+        savedDecks.Clear(); backupFiles.Clear(); backupIndex = 0; backupQuery = "";
         try
         {
-            var files = new List<string>();
             string directory = Path.Combine(Root, "backups");
-            if (Directory.Exists(directory)) files.AddRange(Directory.GetFiles(directory, "decks.json", SearchOption.AllDirectories).OrderByDescending(p => p));
+            if (Directory.Exists(directory)) backupFiles.AddRange(Directory.GetFiles(directory, "decks.json", SearchOption.AllDirectories).OrderByDescending(p => p));
             string original = Path.Combine(Root, "legacy-backup.json");
-            if (File.Exists(original)) files.Add(original);
-            foreach (string path in files)
+            if (File.Exists(original)) backupFiles.Add(original);
+            LoadBackup();
+        }
+        catch (Exception ex) { status = "Could not read backups: " + ex.Message; }
+    }
+
+    void LoadBackup()
+    {
+        savedDecks.Clear(); scroll = Vector2.zero;
+        if (backupFiles.Count == 0) { status = "No saved decks yet. Backups are made before deletion."; return; }
+        try
+        {
+            string path = backupFiles[backupIndex];
             {
                 var entries = Newtonsoft.Json.Linq.JArray.Parse(File.ReadAllText(path));
                 foreach (var entry in entries)
@@ -259,7 +272,7 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
                     savedDecks.Add(new SavedDeck { Source = path, Summary = summary, Contents = contents });
                 }
             }
-            status = "Copy a saved deck, close this panel, then click Arena's Import button. Existing decks are not replaced.";
+            status = "Copy a saved deck, close this panel, then click Import in Arena.";
         }
         catch (Exception ex) { status = "Could not read backups: " + ex.Message; }
     }
@@ -268,13 +281,33 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
     {
         if (GUILayout.Button("Back to keep selection", button)) { browsingBackups = false; scroll = Vector2.zero; status = rows.Count + " decks loaded. Check the decks you want to keep."; }
         GUILayout.Space(8);
+        GUILayout.BeginHorizontal();
+        GUI.enabled = backupIndex > 0;
+        if (GUILayout.Button("Newer", button, GUILayout.Width(95))) { backupIndex--; LoadBackup(); }
+        GUI.enabled = true;
+        string date = "No backups";
+        if (backupFiles.Count > 0)
+        {
+            date = File.GetLastWriteTime(backupFiles[backupIndex]).ToString("dd MMM yyyy, HH:mm");
+            date += "   (" + (backupIndex + 1) + " / " + backupFiles.Count + ")";
+        }
+        GUILayout.Label(date, label);
+        GUI.enabled = backupIndex + 1 < backupFiles.Count;
+        if (GUILayout.Button("Older", button, GUILayout.Width(95))) { backupIndex++; LoadBackup(); }
+        GUI.enabled = true;
+        GUILayout.EndHorizontal();
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("Find a deck", label, GUILayout.Width(100));
+        backupQuery = GUILayout.TextField(backupQuery, field);
+        GUILayout.EndHorizontal();
+        GUILayout.Label("Search this backup. Older backups stay saved; only this one is loaded.", detailStyle);
         scroll = GUILayout.BeginScrollView(scroll, GUILayout.ExpandHeight(true));
-        foreach (var saved in savedDecks)
+        foreach (var saved in savedDecks.Where(d => string.IsNullOrWhiteSpace(backupQuery) || DisplayName(d.Summary.Name).IndexOf(backupQuery, StringComparison.OrdinalIgnoreCase) >= 0))
         {
             GUILayout.BeginHorizontal();
             GUILayout.BeginVertical();
             GUILayout.Label(DisplayName(saved.Summary.Name), deckNameStyle);
-            GUILayout.Label(Path.GetFileName(Path.GetDirectoryName(saved.Source)) + " | " + saved.Summary.Format, detailStyle);
+            GUILayout.Label(saved.Summary.Format, detailStyle);
             GUILayout.EndVertical();
             if (GUILayout.Button("Copy for Import", button, GUILayout.Width(150))) CopyBackup(saved);
             GUILayout.EndHorizontal();
