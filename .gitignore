@@ -1,0 +1,11 @@
+.tools/
+dist/
+bin/
+obj/
+*.log
+**/data/
+**/state/
+**/backups/
+**/exports/
+**/preferences.json
+**/install-manifest.json
