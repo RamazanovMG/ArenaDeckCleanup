@@ -1,38 +1,31 @@
 # Arena Deck Cleanup
 
-Delete unwanted decks together. Pick which ones stay.
+Delete many decks at once. Pick which ones stay.
+
+Platform: Windows
 
 ## Install
 
-1. Right-click the downloaded ZIP and choose **Extract All**.
-2. Close Arena, then double-click **Install.cmd** in the extracted folder.
-3. If Windows asks permission, choose **Yes**. Wait for **Installed**.
+1. Download and unzip.
+2. Close Arena.
+3. Double-click **Install.cmd**. Click **Yes** if asked.
 
-Open Arena, go to **Decks**, and press **F8**.
+## Delete decks
 
-Works on Windows only. Internet is needed during installation.
-If Arena cannot be found, you will be asked to choose its folder.
+1. Open Arena → **Decks** → press **F8**.
+2. Check the decks to **KEEP**. Unchecked decks get deleted.
+3. Click **Review deletion** → **Delete**.
 
-## Choose what stays
+**Keep all / Keep none** affects every deck, even hidden ones.
 
-- **Green checked box / KEEP:** the deck stays.
-- **Empty box / DELETE:** the deck will be removed.
+## Get a deck back
 
-Click a deck's row to change it. Click **Review deletion**, check the list,
-then click **Delete**. Nothing is deleted just by opening the app.
-**Keep all** and **Keep none** affect every deck, including hidden search results.
-
-## Bring a deck back
-
-Press **F8 → Backups → Copy for Import** beside the saved deck.
-Close the panel and click Arena's **Import** button.
-You may need to set its name, format, and appearance again.
+**F8 → Backups → Copy for Import**.
+Close the panel. Click **Import** in Arena.
 
 ## Remove the app
 
-Close Arena and double-click **Uninstall.cmd**. Your decks and backups stay safe.
-Keep the extracted folder so you can use this button later.
+Close Arena. Double-click **Uninstall.cmd**.
+Your decks and backups stay.
 
-## Might be incompatible with future MTGA updates.
-
-This is an unofficial app, not made by Wizards of the Coast.
+Arena updates may stop the app from working.
