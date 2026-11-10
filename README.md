@@ -33,9 +33,6 @@ You may need to set its name, format, and appearance again.
 Close Arena and double-click **Uninstall.cmd**. Your decks and backups stay safe.
 Keep the extracted folder so you can use this button later.
 
-## After an Arena update
-
-If the button disappears, close Arena and run **Install.cmd** again.
-If that does not help, you may need a newer version of Deck Cleanup.
+## Might be incompatible with future MTGA updates.
 
 This is an unofficial app, not made by Wizards of the Coast.
