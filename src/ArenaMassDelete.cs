@@ -7,17 +7,19 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using BepInEx;
+using HarmonyLib;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 using Wizards.Arena.Promises;
 using Wizards.Mtga;
 using Wizards.Mtga.Decks;
 using Wotc.Mtga.Network.ServiceWrappers;
 
-[BepInPlugin("local.maga.arena.massdelete", "Arena Deck Cleanup", "2.0.0")]
+[BepInPlugin("local.maga.arena.massdelete", "Arena Deck Cleanup", "1.0.0")]
 public sealed class ArenaMassDelete : BaseUnityPlugin
 {
     static readonly string Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ArenaDeckCleanup");
@@ -29,10 +31,13 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
     Vector2 scroll;
     string query = "", status = "Open the panel to load your personal decks.", runPath;
     bool visible, busy, confirming, uncertain, onDeckScreen, browsingBackups;
-    class SavedDeck { public string Source; public Client_DeckSummary Summary; public Client_DeckContents Contents; }
+    class SavedDeck { public string Source; public Client_DeckSummary Summary; public Client_DeckContents Contents; public DateTime Date; public string Colors; }
     List<SavedDeck> savedDecks = new List<SavedDeck>();
     List<string> backupFiles = new List<string>();
-    int backupIndex;
+    RectTransform trashAnchor;
+    readonly Filter mainFilter = new Filter(), backupFilter = new Filter();
+    readonly Dictionary<Guid, string> colors = new Dictionary<Guid, string>();
+    int backupPage;
     string backupQuery = "";
     GUIStyle deckNameStyle, badgeStyle, detailStyle;
     float nextProbe;
@@ -43,37 +48,127 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
     List<ManagedDeck> succeeded = new List<ManagedDeck>();
     GUIStyle label, heading, button, toggle, box, field;
     Texture2D panelTexture;
+    readonly Dictionary<string, Texture2D> icons = new Dictionary<string, Texture2D>();
+    Filter calendarFilter;
+    bool calendarEnd;
+    DateTime calendarMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    bool hasError, loadingPage;
+    float suppressEscapeUntil = -1;
+    static ArenaMassDelete instance;
+    Harmony inputPatch;
+    readonly HashSet<SavedDeck> restoreSelection = new HashSet<SavedDeck>();
+    readonly HashSet<SavedDeck> restoredThisSession = new HashSet<SavedDeck>();
+    bool restoreUncertain;
+    static bool EscapePrefix(InputAction.CallbackContext context) {
+        var plugin = instance;
+        if (plugin == null || (!plugin.visible && Time.realtimeSinceStartup > plugin.suppressEscapeUntil)) return true;
+        plugin.suppressEscapeUntil = Time.realtimeSinceStartup + .35f;
+        if (context.performed && plugin.visible) plugin.ClosePanel();
+        return false;
+    }
+    static bool SettingsBackPrefix(Core.Code.Input.ActionContext __0) {
+        var plugin = instance;
+        if (plugin == null || (!plugin.visible && Time.realtimeSinceStartup > plugin.suppressEscapeUntil)) return true;
+        __0.Used = true;
+        plugin.suppressEscapeUntil = Time.realtimeSinceStartup + .35f;
+        if (plugin.visible) plugin.ClosePanel();
+        plugin.Logger.LogInfo("Consumed Arena Back for the cleanup overlay.");
+        return false;
+    }
+    static bool BlockSettingsOpen() {
+        var plugin = instance;
+        if (plugin == null || (!plugin.visible && Time.realtimeSinceStartup > plugin.suppressEscapeUntil)) return false;
+        if (plugin.visible) {
+            plugin.suppressEscapeUntil = Time.realtimeSinceStartup + .35f;
+            plugin.ClosePanel();
+        }
+        return true;
+    }
+    static bool SettingsOpenPrefix(ref System.Threading.Tasks.Task __result) {
+        if (!BlockSettingsOpen()) return true;
+        __result = System.Threading.Tasks.Task.FromResult(0);
+        return false;
+    }
+    static bool SettingsMenuOpenPrefix() { return !BlockSettingsOpen(); }
+    Texture2D Icon(string name) {
+        Texture2D value;
+        if (icons.TryGetValue(name, out value)) return value;
+        using (var stream = GetType().Assembly.GetManifestResourceStream("ArenaDeckCleanup." + name + ".png")) {
+            if (stream == null) return Texture2D.whiteTexture;
+            var bytes = new byte[stream.Length]; stream.Read(bytes, 0, bytes.Length);
+            value = new Texture2D(2, 2); ImageConversion.LoadImage(value, bytes);
+            icons[name] = value; return value;
+        }
+    }
+    void Mana(Rect rect, string value) {
+        int index = 0;
+        foreach (char c in "WUBRGC") if ((value ?? "").Contains(c.ToString())) {
+            GUI.DrawTexture(new Rect(rect.x + index * 24, rect.y, 21, 21), Icon(c.ToString()), ScaleMode.ScaleToFit);
+            index++;
+        }
+    }
 
-    void Awake()
+    bool navigationReady, storageReady;
+    void Awake() { instance = this; SceneManager.sceneLoaded += OnSceneLoaded; }
+    void OnSceneLoaded(Scene scene, LoadSceneMode mode) {
+        if (scene.name == "MainNavigation") {
+            navigationReady = true;
+            if (inputPatch == null) {
+                inputPatch = new Harmony("local.maga.arena.massdelete.input");
+                inputPatch.Patch(AccessTools.Method(GameType("Core.Code.Input.NewInputHandler"), "OnEscape"),
+                    prefix: new HarmonyMethod(typeof(ArenaMassDelete), "EscapePrefix"));
+                inputPatch.Patch(AccessTools.Method(GameType("SettingsMenuHost"), "OnBack"),
+                    prefix: new HarmonyMethod(typeof(ArenaMassDelete), "SettingsBackPrefix"));
+                inputPatch.Patch(AccessTools.Method(GameType("SettingsMenuHost"), "Open"),
+                    prefix: new HarmonyMethod(typeof(ArenaMassDelete), "SettingsOpenPrefix"));
+                inputPatch.Patch(AccessTools.Method(GameType("SettingsMenu"), "Open"),
+                    prefix: new HarmonyMethod(typeof(ArenaMassDelete), "SettingsMenuOpenPrefix"));
+            }
+        }
+        if (scene.name == "Bootstrap") navigationReady = false;
+    }
+    void InitializeStorage()
     {
+        if (storageReady) return;
+        storageReady = true;
         Directory.CreateDirectory(Root);
-        try { BackupRetention.Apply(Root); }
-        catch (Exception ex) { Logger.LogError("Backup cleanup failed: " + ex.Message); }
+
         try
         {
             var path = Path.Combine(Root, "preferences.json");
             if (File.Exists(path)) preferences = JsonConvert.DeserializeObject<Dictionary<Guid, bool>>(File.ReadAllText(path)) ?? preferences;
         }
         catch (Exception ex) { Logger.LogWarning("Could not read keep preferences: " + ex.Message); }
-        Logger.LogInfo("Ready. Open Decks, then Deck cleanup or F8. No automatic deletion.");
+        Logger.LogInfo("Ready. Open Decks, then Bulk delete. No automatic deletion.");
     }
 
     void Update()
     {
+        if (!navigationReady) return;
         if (Time.realtimeSinceStartup >= nextProbe)
         {
             nextProbe = Time.realtimeSinceStartup + 1;
             deckScreen = UnityEngine.Object.FindAnyObjectByType<DeckManagerController>();
             onDeckScreen = deckScreen != null && deckScreen.gameObject.activeInHierarchy;
             if (!onDeckScreen && visible && !busy) ClosePanel();
+            trashAnchor = null;
+            if (onDeckScreen) {
+                var member = typeof(DeckManagerController).GetField("_deleteDeckButton", BindingFlags.Instance | BindingFlags.NonPublic);
+                var component = member == null ? null : member.GetValue(deckScreen) as Component;
+                if (component != null) trashAnchor = component.transform as RectTransform;
+            }
         }
 
     }
 
     void OnDestroy()
     {
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+        if (inputPatch != null) inputPatch.UnpatchSelf();
+        if (instance == this) instance = null;
         if (blocker != null) Destroy(blocker);
         if (panelTexture != null) Destroy(panelTexture);
+        foreach (var icon in icons.Values) Destroy(icon);
     }
 
     void SetBlocker(bool active)
@@ -100,6 +195,9 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
 
     void OpenPanel()
     {
+        if (busy) { visible = true; SetBlocker(true); return; }
+        hasError = false; calendarFilter = null; loadingPage = true; scroll = Vector2.zero;
+        status = "Loading...";
         visible = true; confirming = false; browsingBackups = false;
         window.width = Mathf.Min(860, Screen.width / UiScale - 30);
         window.height = Mathf.Min(710, Screen.height / UiScale - 40);
@@ -112,7 +210,7 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
 
     void ClosePanel()
     {
-        if (busy) return;
+        calendarFilter = null;
         SavePreferences();
         visible = false; confirming = false; SetBlocker(false);
     }
@@ -147,15 +245,25 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
 
     void DrawGui()
     {
-        if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.F8 && !busy)
+        if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape && visible)
         {
-            if (visible) ClosePanel(); else OpenPanel();
+            suppressEscapeUntil = Time.realtimeSinceStartup + .35f; ClosePanel();
             Event.current.Use();
         }
         Styles();
         if (!visible)
         {
-            if (GUI.Button(new Rect(Screen.width / UiScale - 225, 175, 200, 38), "Deck cleanup  [F8]", button)) OpenPanel();
+            if (trashAnchor != null) {
+                var corners = new Vector3[4]; trashAnchor.GetWorldCorners(corners);
+                var canvas = trashAnchor.GetComponentInParent<Canvas>();
+                var camera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay ? canvas.worldCamera : null;
+                var right = RectTransformUtility.WorldToScreenPoint(camera, corners[2]);
+                var bottom = RectTransformUtility.WorldToScreenPoint(camera, corners[3]);
+                float x = Mathf.Min(right.x / UiScale + 12, Screen.width / UiScale - 152);
+                float y = (Screen.height - (right.y + bottom.y) / 2) / UiScale - 34;
+                if (GUI.Button(new Rect(x, y, 68, 68), new GUIContent(Icon("bulk-delete"), "Bulk delete"), GUIStyle.none)) OpenPanel();
+                if (GUI.Button(new Rect(x + 76, y, 68, 68), new GUIContent(Icon("archive"), "Backups"), GUIStyle.none)) StartTask(OpenArchive());
+            }
             return;
         }
         window = GUI.Window(920174, window, DrawWindow, "", box);
@@ -165,12 +273,13 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
     {
         GUILayout.BeginHorizontal();
         GUILayout.Label(browsingBackups ? "Recover a backed-up deck" : confirming ? "Confirm deck cleanup" : "Choose decks to keep", heading);
-        GUI.enabled = !busy;
+        GUI.enabled = true;
         if (GUILayout.Button("Close", button, GUILayout.Width(80))) ClosePanel();
         GUI.enabled = true;
         GUILayout.EndHorizontal();
         GUILayout.Space(8);
-        GUILayout.Label(status, label, GUILayout.Height(48));
+        if (hasError || busy) GUILayout.Label(status, label);
+        if (loadingPage) { GUILayout.FlexibleSpace(); return; }
         if (browsingBackups) DrawBackups(); else if (confirming) DrawConfirmation(); else DrawSelection();
         GUI.DragWindow(new Rect(0, 0, window.width - 110, 45));
     }
@@ -179,10 +288,11 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
     {
         GUI.enabled = !busy;
         GUILayout.BeginHorizontal();
-        GUILayout.Label("Search", label, GUILayout.Width(60));
+        GUILayout.Label("Name", label, GUILayout.Width(60));
         query = GUILayout.TextField(query, field);
-        if (GUILayout.Button("Refresh", button, GUILayout.Width(95))) { SavePreferences(); StartTask(LoadRows()); }
+        if (GUILayout.Button("Refresh", button, GUILayout.Width(95))) { SavePreferences(); StartTask(LoadRows(true)); }
         GUILayout.EndHorizontal();
+        DrawFilters(mainFilter, "Updated");
         GUILayout.Space(8);
         GUILayout.BeginHorizontal();
         if (GUILayout.Button("Keep all", button, GUILayout.Width(120))) keep = new HashSet<Guid>(rows.Select(d => d.Id));
@@ -192,16 +302,16 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
         GUILayout.Label(keep.Count + " kept   /   " + (rows.Count - keep.Count) + " to delete", label);
         GUILayout.EndHorizontal();
         GUILayout.Space(6);
-        GUILayout.Label("Checked decks stay. Unchecked decks will be deleted.", label);
+
         scroll = GUILayout.BeginScrollView(scroll, GUILayout.ExpandHeight(true));
-        foreach (var row in rows.Where(d => string.IsNullOrWhiteSpace(query) || DisplayName(d.Name).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0))
+        foreach (var row in rows.Where(d => Matches(d.Name, d.Updated, colors.ContainsKey(d.Id) ? colors[d.Id] : "?", query, mainFilter)))
         {
             bool wasKept = keep.Contains(row.Id);
             bool isKept = DrawDeckRow(row, wasKept);
             if (wasKept != isKept) { if (isKept) keep.Add(row.Id); else keep.Remove(row.Id); }
         }
         GUILayout.EndScrollView();
-        GUILayout.Label("New decks start checked. Your choices are remembered. Each cleanup saves a backup.", label, GUILayout.Height(42));
+
         GUI.enabled = !busy && !uncertain && rows.Count > keep.Count;
         if (GUILayout.Button("Review deletion of " + (rows.Count - keep.Count) + " decks", button))
         {
@@ -235,27 +345,48 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
             for (int i = 0; i < 7; i++) Fill(new Rect(check.x + 5 + i, check.y + 13 + i, 4, 4), ink);
             for (int i = 0; i < 13; i++) Fill(new Rect(check.x + 11 + i, check.y + 19 - i, 4, 4), ink);
         }
-        GUI.Label(new Rect(r.x + 57, r.y + 7, r.width - 153, 23), DisplayName(deck.Name), deckNameStyle);
+        string identity = colors.ContainsKey(deck.Id) ? colors[deck.Id] : "?";
+        float iconWidth = identity == "?" ? 0 : identity.Length * 24;
+        var nameRect = new Rect(r.x + 57, r.y + 7, r.width - 153 - iconWidth, 23);
+        GUI.Label(nameRect, DisplayName(deck.Name), deckNameStyle);
+        float textWidth = Mathf.Min(nameRect.width, deckNameStyle.CalcSize(new GUIContent(DisplayName(deck.Name))).x);
+        Mana(new Rect(nameRect.x + textWidth + 8, nameRect.y, iconWidth, 21), identity);
         GUI.Label(new Rect(r.x + 57, r.y + 31, r.width - 153, 20), deck.Format ?? "", detailStyle);
         badgeStyle.normal.textColor = accent;
         GUI.Label(new Rect(r.xMax - 88, r.y + 12, 78, 32), selected ? "KEEP" : "DELETE", badgeStyle);
         return next;
     }
 
+    IEnumerator OpenArchive()
+    {
+        if (visible) yield break;
+        visible = true; confirming = false; browsingBackups = true; hasError = false; calendarFilter = null; loadingPage = true; status = "Loading...";
+        window.width = Mathf.Min(860, Screen.width / UiScale - 30);
+        window.height = Mathf.Min(710, Screen.height / UiScale - 40);
+        window.x = (Screen.width / UiScale - window.width) / 2;
+        window.y = (Screen.height / UiScale - window.height) / 2;
+        SetBlocker(true);
+        InitializeStorage();
+        provider = Pantry.GetWithoutCreate<DeckDataProvider>(true);
+        yield return null;
+        OpenBackups();
+        loadingPage = false;
+    }
+
     void OpenBackups()
     {
-        SavePreferences(); browsingBackups = true; scroll = Vector2.zero;
-        savedDecks.Clear(); backupFiles.Clear(); backupIndex = 0; backupQuery = "";
+        calendarFilter = null; hasError = false; SavePreferences(); browsingBackups = true; scroll = Vector2.zero;
+        restoreSelection.Clear(); restoredThisSession.Clear(); savedDecks.Clear(); backupFiles.Clear(); backupPage = 0; backupQuery = "";
         try
         {
-            BackupRetention.Apply(Root);
+
             string directory = Path.Combine(Root, "backups");
             if (Directory.Exists(directory)) backupFiles.AddRange(Directory.GetFiles(directory, "decks.json", SearchOption.AllDirectories).OrderByDescending(p => p));
             string original = Path.Combine(Root, "legacy-backup.json");
             if (File.Exists(original)) backupFiles.Add(original);
             LoadBackup();
         }
-        catch (Exception ex) { status = "Could not read backups: " + ex.Message; }
+        catch (Exception ex) { hasError = true; status = "Could not read backups: " + ex.Message; }
     }
 
     void LoadBackup()
@@ -264,7 +395,7 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
         if (backupFiles.Count == 0) { status = "No saved decks yet. Backups are made before deletion."; return; }
         try
         {
-            string path = backupFiles[backupIndex];
+            foreach (string path in backupFiles)
             {
                 var entries = Newtonsoft.Json.Linq.JArray.Parse(File.ReadAllText(path));
                 foreach (var entry in entries)
@@ -272,52 +403,209 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
                     var summary = entry["Summary"].ToObject<Client_DeckSummary>();
                     var contents = entry["Contents"].ToObject<Client_DeckContents>();
                     if (summary == null || contents == null || contents.Piles == null) continue;
-                    savedDecks.Add(new SavedDeck { Source = path, Summary = summary, Contents = contents });
+                    savedDecks.Add(new SavedDeck { Source = path, Summary = summary, Contents = contents,
+                        Date = entry["BackedUpAtUtc"] == null ? File.GetLastWriteTime(path) : entry["BackedUpAtUtc"].ToObject<DateTime>().ToLocalTime(), Colors = DeckColors(contents) });
                 }
             }
             status = "Copy a saved deck, close this panel, then click Import in Arena.";
         }
-        catch (Exception ex) { status = "Could not read backups: " + ex.Message; }
+        catch (Exception ex) { hasError = true; status = "Could not read backups: " + ex.Message; }
     }
 
     void DrawBackups()
     {
-        if (GUILayout.Button("Back to keep selection", button)) { browsingBackups = false; scroll = Vector2.zero; status = rows.Count + " decks loaded. Check the decks you want to keep."; }
+        GUI.enabled = !busy;
+        if (GUILayout.Button("Back to keep selection", button)) { calendarFilter = null; browsingBackups = false; scroll = Vector2.zero; loadingPage = true; status = "Loading..."; StartTask(LoadRows()); }
         GUILayout.Space(8);
         GUILayout.BeginHorizontal();
-        GUI.enabled = backupIndex > 0;
-        if (GUILayout.Button("Newer", button, GUILayout.Width(95))) { backupIndex--; LoadBackup(); }
-        GUI.enabled = true;
-        string date = "No backups";
-        if (backupFiles.Count > 0)
-        {
-            date = File.GetLastWriteTime(backupFiles[backupIndex]).ToString("dd MMM yyyy, HH:mm");
-            date += "   (" + (backupIndex + 1) + " / " + backupFiles.Count + ")";
-        }
-        GUILayout.Label(date, label);
-        GUI.enabled = backupIndex + 1 < backupFiles.Count;
-        if (GUILayout.Button("Older", button, GUILayout.Width(95))) { backupIndex++; LoadBackup(); }
-        GUI.enabled = true;
-        GUILayout.EndHorizontal();
-        GUILayout.BeginHorizontal();
-        GUILayout.Label("Find a deck", label, GUILayout.Width(100));
+        GUILayout.Label("Name", label, GUILayout.Width(60));
         backupQuery = GUILayout.TextField(backupQuery, field);
         GUILayout.EndHorizontal();
-        GUILayout.Label("Only your 50 newest saved decks are kept. Older ones are permanently removed.", detailStyle);
+        DrawFilters(backupFilter, "Backed up");
+        var matches = savedDecks.Where(d => Matches(d.Summary.Name, d.Date, d.Colors, backupQuery, backupFilter)).OrderByDescending(d => d.Date).ToList();
+        int pages = Math.Max(1, (matches.Count + 29) / 30);
+        backupPage = Math.Min(backupPage, pages - 1);
+        GUILayout.BeginHorizontal();
+        GUI.enabled = backupPage > 0;
+        if (GUILayout.Button("Previous", button, GUILayout.Width(95))) { backupPage--; scroll = Vector2.zero; }
+        GUI.enabled = true;
+        GUILayout.Label(matches.Count + " saved  /  page " + (backupPage + 1) + " of " + pages, label);
+        GUI.enabled = backupPage + 1 < pages;
+        if (GUILayout.Button("Next", button, GUILayout.Width(95))) { backupPage++; scroll = Vector2.zero; }
+        GUI.enabled = true;
+        GUILayout.EndHorizontal();
+        GUI.enabled = !busy && !restoreUncertain;
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("Select shown", button)) foreach (var d in matches) if (!restoredThisSession.Contains(d)) restoreSelection.Add(d);
+        if (GUILayout.Button("Clear selection", button)) restoreSelection.Clear();
+        GUILayout.EndHorizontal();
         scroll = GUILayout.BeginScrollView(scroll, GUILayout.ExpandHeight(true));
-        foreach (var saved in savedDecks.Where(d => string.IsNullOrWhiteSpace(backupQuery) || DisplayName(d.Summary.Name).IndexOf(backupQuery, StringComparison.OrdinalIgnoreCase) >= 0))
-        {
-            GUILayout.BeginHorizontal();
-            GUILayout.BeginVertical();
-            GUILayout.Label(DisplayName(saved.Summary.Name), deckNameStyle);
-            GUILayout.Label(saved.Summary.Format, detailStyle);
-            GUILayout.EndVertical();
-            if (GUILayout.Button("Copy for Import", button, GUILayout.Width(150))) CopyBackup(saved);
-            GUILayout.EndHorizontal();
-            GUILayout.Space(10);
+        foreach (var saved in matches.Skip(backupPage * 30).Take(30)) {
+            bool done = restoredThisSession.Contains(saved);
+            GUI.enabled = !busy && !restoreUncertain && !done;
+            Rect r = GUILayoutUtility.GetRect(0, 58, GUILayout.ExpandWidth(true));
+            bool selected = restoreSelection.Contains(saved);
+            bool next = GUI.Toggle(r, selected, GUIContent.none, GUIStyle.none);
+            if (next) restoreSelection.Add(saved); else restoreSelection.Remove(saved);
+            Color accent = new Color(.35f, .9f, .65f);
+            Fill(new Rect(r.x, r.y + 2, r.width, 54), selected ? new Color(.12f, .22f, .20f) : new Color(.12f, .13f, .16f));
+            Rect check = new Rect(r.x + 14, r.y + 14, 30, 30);
+            Fill(check, selected ? accent : new Color(.45f,.47f,.51f));
+            Fill(new Rect(check.x+3,check.y+3,24,24), selected ? accent : new Color(.09f,.105f,.13f));
+            if (selected) {
+                for(int i=0;i<7;i++) Fill(new Rect(check.x+5+i,check.y+13+i,4,4),Color.black);
+                for(int i=0;i<13;i++) Fill(new Rect(check.x+11+i,check.y+19-i,4,4),Color.black);
+            }
+            float iconWidth = (saved.Colors ?? "C").Length * 24;
+            Rect nr = new Rect(r.x+57,r.y+7,r.width-155-iconWidth,23);
+            GUI.Label(nr,DisplayName(saved.Summary.Name),deckNameStyle);
+            float tw = Mathf.Min(nr.width,deckNameStyle.CalcSize(new GUIContent(DisplayName(saved.Summary.Name))).x);
+            Mana(new Rect(nr.x+tw+8,nr.y,iconWidth,21),saved.Colors);
+            GUI.Label(new Rect(nr.x,r.y+31,r.width-155,20),saved.Date.ToString("dd MMM yyyy")+"  /  "+saved.Summary.Format,detailStyle);
+            if(done) GUI.Label(new Rect(r.xMax-85,r.y+15,80,25),"Restored",detailStyle);
         }
         GUILayout.EndScrollView();
-        GUILayout.Label("Import creates a new deck. Cards are not crafted automatically. The original JSON backup stays intact.", label, GUILayout.Height(42));
+        GUI.enabled = !busy && !restoreUncertain && restoreSelection.Count > 0;
+        if (GUILayout.Button("Restore selected (" + restoreSelection.Count + ")", button))
+            StartTask(RestoreSelected(restoreSelection.ToList()));
+        GUI.enabled = true;
+    }
+
+    IEnumerator RestoreSelected(List<SavedDeck> selected) {
+        runPath = null;
+        if (restoreUncertain || selected.Count == 0) yield break;
+        provider = Pantry.GetWithoutCreate<DeckDataProvider>(true);
+        if (provider == null || !provider.Initialized) throw new Exception("Arena deck data is not ready.");
+        yield return RefreshServer();
+        var manager = (DecksManager)typeof(DeckManagerController).GetField("_decksManager", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(deckScreen);
+        int limit = manager.GetDeckLimit();
+        if (Snapshot().Count + selected.Count > limit)
+            throw new Exception("Not enough room. Select at most " + Math.Max(0,limit-Snapshot().Count) + " decks.");
+        int count = 0;
+        foreach (var saved in selected) {
+            SetStatus("Restoring " + (count+1) + " / " + selected.Count + "...");
+            var summary = JsonConvert.DeserializeObject<Client_DeckSummary>(JsonConvert.SerializeObject(saved.Summary));
+            var contents = JsonConvert.DeserializeObject<Client_DeckContents>(JsonConvert.SerializeObject(saved.Contents));
+            summary.DeckId = Guid.NewGuid(); summary.IsNetDeck = false; summary.LastUpdated = DateTime.UtcNow;
+            // A fresh ID restores a copy without changing the saved backup or an existing deck.
+            restoreUncertain = true;
+            var request = provider.CreateDeck(new Client_Deck(summary,contents), "Import");
+            yield return Await(request,"Restore " + DisplayName(summary.Name));
+            restoreUncertain = false;
+            restoredThisSession.Add(saved); restoreSelection.Remove(saved);
+            preferences[summary.DeckId] = true;
+            count++;
+        }
+        yield return RefreshServer();
+        rows = Snapshot(); keep = MassDeletePolicy.InitialKeep(rows, preferences);
+        colors.Clear(); foreach(var row in rows) colors[row.Id] = DeckColors(provider.GetDeckForId(row.Id).Contents);
+        SavePreferences();
+        SetStatus("Restored " + count + " decks.");
+        if(deckScreen != null) {
+            var reload = typeof(DeckManagerController).GetMethod("Coroutine_LoadDecks",BindingFlags.Instance|BindingFlags.NonPublic);
+            var bucket = typeof(DeckManagerController).GetField("_selectedBucket",BindingFlags.Instance|BindingFlags.NonPublic);
+            if(reload != null && bucket != null) deckScreen.StartCoroutine((IEnumerator)reload.Invoke(deckScreen,new object[]{bucket.GetValue(deckScreen),null}));
+        }
+    }
+
+    sealed class Filter { public string From = "", To = "", Colors = ""; }
+    void DrawFilters(Filter filter, string dateLabel)
+    {
+        GUILayout.BeginHorizontal();
+        GUILayout.Label(dateLabel, detailStyle, GUILayout.Width(70));
+        if (GUILayout.Button(DateLabel(filter.From, "From"), button, GUILayout.Width(125))) OpenCalendar(filter, false);
+        if (GUILayout.Button(DateLabel(filter.To, "Until"), button, GUILayout.Width(125))) OpenCalendar(filter, true);
+        GUILayout.FlexibleSpace();
+        foreach (char c in "WUBRGC") {
+            bool selected = filter.Colors.Contains(c.ToString());
+            Rect r = GUILayoutUtility.GetRect(36, 36, GUILayout.Width(36));
+            if (selected) Fill(new Rect(r.x, r.y, 36, 36), new Color(.78f, .66f, .38f));
+            Fill(new Rect(r.x + 2, r.y + 2, 32, 32), new Color(.09f,.105f,.13f));
+            var tint = GUI.color; GUI.color = new Color(1,1,1,selected ? 1 : .65f);
+            if (GUI.Button(new Rect(r.x+4,r.y+4,28,28), new GUIContent(Icon(c.ToString())), GUIStyle.none)) {
+                if (c == 'C') filter.Colors = selected ? "" : "C";
+                else filter.Colors = selected ? filter.Colors.Replace(c.ToString(), "") : filter.Colors.Replace("C", "") + c;
+                backupPage = 0;
+            }
+            GUI.color = tint;
+        }
+        if (GUILayout.Button("Clear", button, GUILayout.Width(58))) { filter.From = filter.To = filter.Colors = ""; calendarFilter = null; backupPage = 0; }
+        GUILayout.EndHorizontal();
+        if (calendarFilter == filter) DrawCalendar();
+    }
+    static string DateLabel(string value, string empty) { DateTime d; return ParseDate(value, out d) ? d.ToString("dd MMM yyyy") : empty; }
+    void OpenCalendar(Filter filter, bool end) {
+        if (calendarFilter == filter && calendarEnd == end) { calendarFilter = null; return; }
+        calendarFilter = filter; calendarEnd = end;
+        DateTime d; if (!ParseDate(end ? filter.To : filter.From, out d)) d = DateTime.Today;
+        calendarMonth = new DateTime(d.Year, d.Month, 1);
+    }
+    void DrawCalendar() {
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("<<", button, GUILayout.Width(42))) calendarMonth = calendarMonth.AddYears(-1);
+        if (GUILayout.Button("<", button, GUILayout.Width(42))) calendarMonth = calendarMonth.AddMonths(-1);
+        GUILayout.Label(calendarMonth.ToString("MMMM yyyy"), heading);
+        if (GUILayout.Button(">", button, GUILayout.Width(42))) calendarMonth = calendarMonth.AddMonths(1);
+        if (GUILayout.Button(">>", button, GUILayout.Width(42))) calendarMonth = calendarMonth.AddYears(1);
+        GUILayout.EndHorizontal();
+        GUILayout.BeginHorizontal();
+        foreach (string day in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" }) GUILayout.Label(day, detailStyle, GUILayout.Width((window.width - 65) / 7));
+        GUILayout.EndHorizontal();
+        int offset = ((int)calendarMonth.DayOfWeek + 6) % 7;
+        int days = DateTime.DaysInMonth(calendarMonth.Year, calendarMonth.Month);
+        DateTime? picked = null;
+        for (int week = 0; week < (offset + days + 6) / 7; week++) {
+            GUILayout.BeginHorizontal();
+            for (int col = 0; col < 7; col++) {
+                int day = week * 7 + col - offset + 1;
+                if (day < 1 || day > days) GUILayout.Space((window.width - 65) / 7 + 4);
+                else {
+                    var d = calendarMonth.AddDays(day - 1);
+                    var old = GUI.backgroundColor;
+                    if (d.ToString("yyyy-MM-dd") == (calendarEnd ? calendarFilter.To : calendarFilter.From)) GUI.backgroundColor = new Color(.8f,.7f,.4f);
+                    if (GUILayout.Button(day.ToString(), button, GUILayout.Width((window.width - 65) / 7))) picked = d;
+                    GUI.backgroundColor = old;
+                }
+            }
+            GUILayout.EndHorizontal();
+        }
+        if (picked.HasValue) {
+            string date = picked.Value.ToString("yyyy-MM-dd");
+            if (calendarEnd) { calendarFilter.To = date; if (string.CompareOrdinal(calendarFilter.From,date)>0) calendarFilter.From=date; }
+            else { calendarFilter.From = date; if (calendarFilter.To.Length>0 && string.CompareOrdinal(calendarFilter.To,date)<0) calendarFilter.To=date; }
+            calendarFilter = null; backupPage = 0; scroll = Vector2.zero;
+        }
+        GUILayout.EndVertical();
+    }
+    static bool ParseDate(string text, out DateTime date) { return DateTime.TryParseExact(text, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out date); }
+    static bool Matches(string name, DateTime date, string colors, string nameQuery, Filter filter)
+    {
+        if (!string.IsNullOrWhiteSpace(nameQuery) && DisplayName(name).IndexOf(nameQuery.Trim(), StringComparison.OrdinalIgnoreCase) < 0) return false;
+        DateTime from, to;
+        if (filter.From.Length > 0 && (!ParseDate(filter.From, out from) || date.ToLocalTime().Date < from)) return false;
+        if (filter.To.Length > 0 && (!ParseDate(filter.To, out to) || date.ToLocalTime().Date > to)) return false;
+        return filter.Colors.All(c => colors.Contains(c.ToString()));
+    }
+    string DeckColors(Client_DeckContents contents)
+    {
+        if (contents == null || contents.Piles == null) return "?";
+        try {
+            var db = typeof(DeckManagerController).GetField("_cardDatabase", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(deckScreen);
+            if (db == null) return "?";
+            var data = db.GetType().GetProperty("CardDataProvider").GetValue(db, null);
+            var lookup = data.GetType().GetMethod("GetCardPrintingById", new[] { typeof(uint), typeof(string) });
+            if (lookup == null) return "?";
+            string result = "";
+            foreach (var card in contents.Piles.Values.SelectMany(p => p)) {
+                var printing = lookup.Invoke(data, new object[] { card.Id, null });
+                if (printing == null) return "?";
+                var flags = printing.GetType().GetProperty("ColorIdentityFlags").GetValue(printing, null).ToString();
+                var names = new[] { "White", "Blue", "Black", "Red", "Green" };
+                for (int i = 0; i < names.Length; i++) if (flags.Contains(names[i]) && !result.Contains("WUBRG"[i].ToString())) result += "WUBRG"[i];
+            }
+            return result.Length == 0 ? "C" : result;
+        } catch (Exception ex) { Logger.LogWarning("Color unavailable: " + ex.Message); return "?"; }
     }
 
     static Type GameType(string name)
@@ -348,19 +636,21 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
                 .Single(m => m.Name == "ToExportString" && m.GetParameters().Length == 3);
             var text = (string)export.Invoke(null, new object[] { model, loc, database });
             if (string.IsNullOrWhiteSpace(text)) throw new Exception("Arena returned an empty deck export.");
+            string originalName = (saved.Summary.Name ?? "").Replace("\r", " ").Replace("\n", " ");
+            text = "About\nName " + originalName + "\n\n" + Regex.Replace(text, @"(?ms)\AAbout\r?\n.*?(?:\r?\n){2}", "");
             string exports = Path.Combine(Root, "exports"); Directory.CreateDirectory(exports);
             File.WriteAllText(Path.Combine(exports, saved.Summary.DeckId + ".txt"), text, new UTF8Encoding(false));
             GUIUtility.systemCopyBuffer = text;
-            status = "Copied " + DisplayName(saved.Summary.Name) + ". Close this panel and click Import. A text copy is also saved in ArenaDeckCleanup/exports.";
+            status = "Copied";
         }
-        catch (Exception ex) { Logger.LogError(ex); status = "Export failed: " + (ex.InnerException ?? ex).Message; }
+        catch (Exception ex) { hasError = true; Logger.LogError(ex); status = "Export failed: " + (ex.InnerException ?? ex).Message; }
     }
 
     void DrawConfirmation()
     {
         int n = confirmedTargets == null ? 0 : confirmedTargets.Count;
         GUILayout.Label("Delete these " + n + " decks and keep " + (confirmedInventory.Count - n) + "?", heading);
-        GUILayout.Label("Only the decks listed below will be removed. There is no automatic retry if the server response is uncertain.", label);
+
         scroll = GUILayout.BeginScrollView(scroll, GUILayout.ExpandHeight(true));
         foreach (var row in confirmedTargets) GUILayout.Label("Delete: " + DisplayName(row.Name), label);
         GUILayout.EndScrollView();
@@ -395,7 +685,7 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
     void StartTask(IEnumerator task)
     {
         if (busy) return;
-        busy = true; StartCoroutine(Guarded(task));
+        hasError = false; busy = true; StartCoroutine(Guarded(task));
     }
 
     IEnumerator Guarded(IEnumerator task)
@@ -412,13 +702,15 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex);
+                hasError = true; Logger.LogError(ex);
                 status = ex.Message + (uncertain ? " Restart Arena before another deletion." : " Refresh and review the selection again.");
                 if (runPath != null)
                 {
                     try { WriteJson(Path.Combine(runPath, "stopped.json"), new { Error = ex.ToString(), Deleted = succeeded, OutcomeUncertain = uncertain }); } catch { }
                 }
-                confirming = false; busy = false; yield break;
+                loadingPage = false; confirming = false; busy = false;
+                if (restoreUncertain) status = "Restore stopped. Check your Arena decks before restarting to try again. " + ex.Message;
+                yield break;
             }
             if (next is IEnumerator) stack.Push((IEnumerator)next); else yield return next;
         }
@@ -455,14 +747,20 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
         yield return Await(request, "Refresh decks");
     }
 
-    IEnumerator LoadRows()
+    IEnumerator LoadRows(bool refresh = false)
     {
+        InitializeStorage();
+        SavePreferences(); rows.Clear(); colors.Clear(); loadingPage = true;
         runPath = null;
         SetStatus("Loading your personal decks...");
         provider = Pantry.GetWithoutCreate<DeckDataProvider>(true);
         if (provider == null || !provider.Initialized) throw new Exception("Arena deck data is not ready yet.");
-        yield return RefreshServer();
+        // Opening uses the same live cache as Arena's deck grid; explicit refresh stays available.
+        if (refresh) yield return RefreshServer();
         rows = Snapshot(); keep = MassDeletePolicy.InitialKeep(rows, preferences);
+        colors.Clear();
+        foreach (var row in rows) colors[row.Id] = DeckColors(provider.GetDeckForId(row.Id).Contents);
+        loadingPage = false;
         SetStatus(uncertain ? "Previous outcome was uncertain. Restart Arena before deleting again." : rows.Count + " decks loaded. Check the decks you want to keep.");
     }
 
@@ -500,7 +798,7 @@ public sealed class ArenaMassDelete : BaseUnityPlugin
             }
         }
         WriteJson(Path.Combine(runPath, "decks.json"), backups);
-        BackupRetention.Apply(Root);
+
         // Revalidate after all backups, before any mutation.
         yield return RefreshServer();
         if (!MassDeletePolicy.Same(initial, Snapshot())) throw new Exception("The deck list changed during backup. Nothing was deleted.");

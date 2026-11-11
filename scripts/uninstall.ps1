@@ -3,6 +3,12 @@ $projectRoot = Split-Path $PSScriptRoot
 . "$projectRoot/scripts/Common.ps1"
 $game = Resolve-ArenaPath $GamePath
 if (Get-Process MTGA -ErrorAction SilentlyContinue) { throw 'Close Arena before uninstalling.' }
+$sharedPlugin = Join-Path $game 'BepInEx/plugins/ArenaDeckCleanup/ArenaMassDelete.dll'
+if (Test-Path -LiteralPath $sharedPlugin) {
+    Remove-Item -LiteralPath $sharedPlugin
+    Write-Output 'Arena Deck Cleanup removed. Other plugins and backups retained.'
+    return
+}
 $manifestPath = Join-Path $game 'DeckCleanupRuntime/install-manifest.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $targets = @()

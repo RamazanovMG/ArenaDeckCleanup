@@ -13,13 +13,14 @@ Platform: Windows
 
 ## Fast bulk deletion
 
-1. Open Arena → **Decks** → press **F8**.
+1. Open Arena → **Decks** → **Bulk delete**.
 2. Check decks to **KEEP**, uncheck decks to **DELETE**, then **Review deletion → Delete**.
 
-## Restore up to 50 recently deleted decks
+## Restore deleted decks
 
-**F8 → Backups → Copy for Import**.
-Close the panel, then click **Import** in Arena.
+Backups never expire. Filter by name, date, or color.
+
+Click the **archive gear**, select decks, then **Restore selected**.
 
 ## Uninstall
 
@@ -28,3 +29,5 @@ Your decks and backups stay.
 
 *Arena updates may require an app update.*
 
+
+Known issue: Escape may also open Arena’s menu. Use **Close** instead.

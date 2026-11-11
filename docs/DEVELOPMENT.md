@@ -51,10 +51,16 @@ Data is per Windows user at `%LOCALAPPDATA%/ArenaDeckCleanup/`:
 - `backups/<run>/`: full JSON backups and operation results.
 - `exports/`: Arena import text generated from saved decks.
 
-Choose **F8 > Backups > Copy for Import**, close the panel, then click Arena's
-**Import** button. This recreates the card list including commander/sideboard;
-set name, format and cosmetics as needed. Importing an existing deck creates
-a duplicate. Cards are never automatically crafted. Original JSON is retained.
+Open the archive gear, select backup rows, then Restore selected. Restoration clones
+saved summaries and contents, assigns fresh IDs, and creates decks sequentially through
+DeckDataProvider.CreateDeck. Original names and backup files are preserved. The current
+Arena deck limit is checked before creating any decks. A failed or uncertain response
+stops the batch without retrying; successful rows are unselected and marked restored.
+No cards are crafted. Restoring an existing deck creates a separate copy.
+
+The overlay suppresses NewInputHandler.OnEscape only while open and for the closing
+input frame. The Harmony patch uses its own ID and is removed on plugin destruction.
+The archive opens directly; live deck refreshes show a loading state instead of old rows.
 
 To migrate from the earlier personal version, close Arena and copy the contents
 of its `permanent/data` directory into the data directory above. Copy the older
@@ -95,9 +101,14 @@ reinstallation, modified-file protection and removal in a temporary fake game
 folder. It deliberately leaves the fixture available for inspection.
 
 
-Backup browsing now opens only one cleanup file at a time (newest first),
-with older/newer navigation and a name filter within the selected backup.
-Only the 50 newest unique deck IDs are retained, keeping the newest version per ID. Older JSON entries and import-text copies are permanently removed on startup, opening Backups, and saving a cleanup backup. Recency uses backup capture time, not deck modification time.
+Backups retain every saved version indefinitely, including exports. No automatic pruning runs.
+The backup browser searches across all cleanup files, newest first, with 30 rows per page.
+Both lists offer name, inclusive local date ranges selected with a calendar, and color identity filters.
+Main-list dates use last modification; backup dates use capture time (file date for legacy data).
+Multiple selected colors require all selected colors. Unknown card data is not treated as colorless.
+Bulk delete is positioned beside Arena's native trash button; Escape closes the panel; F8 is not bound.
+Startup work waits for MainNavigation; storage initializes on first panel open.
+
 Only Install.cmd and Uninstall.cmd are user-facing launchers; all PowerShell
 helpers, including build/test/install/uninstall, live in scripts/.
 

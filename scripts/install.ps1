@@ -4,6 +4,17 @@ $projectRoot = Split-Path $PSScriptRoot
 $game = Resolve-ArenaPath $GamePath
 if (Get-Process MTGA -ErrorAction SilentlyContinue) { throw 'Close Arena before installation.' }
 if (!(Test-Path "$projectRoot/payload/ArenaMassDelete.dll")) { throw 'The download is incomplete. Download and extract the app again.' }
+# Reuse the loader already used by MTGA+; never replace another plugin's loader.
+$sharedCore = Join-Path $game 'BepInEx/core/BepInEx.dll'
+$doorstop = Join-Path $game 'doorstop_config.ini'
+if ((Test-Path -LiteralPath $sharedCore) -and (Test-Path -LiteralPath $doorstop) -and
+    ((Get-Content -LiteralPath $doorstop -Raw) -match 'BepInEx[\\/]core[\\/]BepInEx.Preloader.dll')) {
+    $pluginDirectory = Join-Path $game 'BepInEx/plugins/ArenaDeckCleanup'
+    New-Item -ItemType Directory -Path $pluginDirectory -Force | Out-Null
+    Copy-Item -LiteralPath "$projectRoot/payload/ArenaMassDelete.dll" -Destination (Join-Path $pluginDirectory 'ArenaMassDelete.dll') -Force
+    Write-Output 'Installed. Open Arena > Decks and use the two gear buttons.'
+    return
+}
 & "$projectRoot/scripts/Get-Dependencies.ps1"
 $runtime = Join-Path $game 'DeckCleanupRuntime'
 $manifestPath = Join-Path $runtime 'install-manifest.json'
@@ -28,7 +39,7 @@ foreach ($entry in $entries) {
     Copy-Item -LiteralPath $entry.Source -Destination $target -Force
 }
 @{ Files=@($entries | ForEach-Object { @{Relative=$_.Relative; Hash=$_.Hash} }) } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
-Write-Output 'Installed. Open Arena > Decks > F8. Data: %LOCALAPPDATA%/ArenaDeckCleanup'
+Write-Output 'Installed. Open Arena > Decks and use the two gear buttons. Data: %LOCALAPPDATA%/ArenaDeckCleanup'
 
 
 
